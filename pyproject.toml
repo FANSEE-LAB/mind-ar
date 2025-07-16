@@ -1,6 +1,6 @@
 [project]
 name = "mindar"
-version = "0.1.1"
+version = "0.1.2"
 description = "High-performance MindAR implementation for real-time image recognition on edge devices. Developed by FANSEE LAB."
 authors = [{name = "FANSEE LAB", email = "info@fansee.com"}]
 maintainers = [{name = "FANSEE LAB", email = "info@fansee.com"}]
@@ -56,3 +56,7 @@ opencv-python = "^4.8.0"
 numpy = "^1.24.0"
 msgpack = "^1.0.0"
 numba = "^0.59.0"
+
+[tool.poetry.group.dev.dependencies]
+twine = "^6.1.0"
+

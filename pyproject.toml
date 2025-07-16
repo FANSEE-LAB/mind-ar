@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "High-performance MindAR implementation for real-time image recognition on edge devices. Developed by FANSEE LAB."
 authors = ["FANSEE LAB <info@fansee.com>"]
 maintainers = ["FANSEE LAB <info@fansee.com>"]
-homepage = "https://fansee.com"
+homepage = "https://fansee.studio"
 license = "MIT"
 readme = "README.md"
 packages = [{include = "mindar", from = "src"}]

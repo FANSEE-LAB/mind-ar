@@ -13,23 +13,9 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-try:
-    from numba import jit
+from .types import FeaturePoint
 
-    NUMBA_AVAILABLE = True
-except ImportError:
-    NUMBA_AVAILABLE = False
-
-    def jit(*args, **kwargs):
-        """Fallback decorator when numba is not available"""
-
-        def decorator(func):
-            return func
-
-        return decorator
-
-
-from .detector import FeaturePoint
+NUMBA_AVAILABLE = True
 
 # Constants optimized for real-time performance
 DEFAULT_RATIO_THRESHOLD = 0.75
@@ -51,20 +37,31 @@ ENABLE_DISTANCE_THRESHOLD = True
 
 
 @dataclass
+class MatcherConfig:
+    """Configuration for the matcher to reduce parameter count."""
+
+    ratio_threshold: float = DEFAULT_RATIO_THRESHOLD
+    distance_threshold: float = DEFAULT_DISTANCE_THRESHOLD
+    min_matches: int = DEFAULT_MIN_MATCHES
+    ransac_threshold: float = DEFAULT_RANSAC_THRESHOLD
+    debug_mode: bool = False
+
+
+@dataclass
 class Match:
     """
     Represents a match between two feature points.
 
     Attributes:
-        queryIdx: Index of the feature in the query set
-        trainIdx: Index of the feature in the train set
+        query_idx: Index of the feature in the query set
+        train_idx: Index of the feature in the train set
         distance: Distance between the features (lower is better)
         query_point: Query feature point
         train_point: Train feature point
     """
 
-    queryIdx: int
-    trainIdx: int
+    query_idx: int
+    train_idx: int
     distance: float
     query_point: Optional[FeaturePoint] = None
     train_point: Optional[FeaturePoint] = None
@@ -104,29 +101,17 @@ class Matcher:
     optimized Hamming distance computation for binary descriptors.
     """
 
-    def __init__(
-        self,
-        ratio_threshold: float = DEFAULT_RATIO_THRESHOLD,
-        distance_threshold: float = DEFAULT_DISTANCE_THRESHOLD,
-        min_matches: int = DEFAULT_MIN_MATCHES,
-        ransac_threshold: float = DEFAULT_RANSAC_THRESHOLD,
-        debug_mode: bool = False,
-    ):
+    def __init__(self, config: MatcherConfig = None):
         """
         Initialize optimized matcher.
 
         Args:
-            ratio_threshold: Lowe's ratio test threshold
-            distance_threshold: Maximum descriptor distance
-            min_matches: Minimum matches for valid homography
-            ransac_threshold: RANSAC inlier threshold
-            debug_mode: Enable debug outputs
+            config: Matcher configuration object
         """
-        self.ratio_threshold = ratio_threshold
-        self.distance_threshold = distance_threshold
-        self.min_matches = min_matches
-        self.ransac_threshold = ransac_threshold
-        self.debug_mode = debug_mode
+        if config is None:
+            config = MatcherConfig()
+
+        self.config = config
 
         # Performance tracking
         self.matching_times = []
@@ -172,14 +157,14 @@ class Matcher:
         homography = None
         inliers = []
 
-        if len(good_matches) >= self.min_matches and ENABLE_GEOMETRIC_VERIFICATION:
+        if len(good_matches) >= self.config.min_matches and ENABLE_GEOMETRIC_VERIFICATION:
             homography, inliers = self._estimate_homography(good_matches)
 
         # Track performance
         matching_time = time.time() - start_time
         self.matching_times.append(matching_time)
 
-        if self.debug_mode:
+        if self.config.debug_mode:
             print(f"Matched {len(good_matches)} features in {matching_time*1000:.1f}ms")
             if homography is not None:
                 print(f"Found homography with {len(inliers)} inliers")
@@ -200,7 +185,7 @@ class Matcher:
             return ClusterNode(center=(0, 0), radius=0)
 
         # Extract positions
-        positions = np.array([[f.x, f.y] for f in features])
+        positions = np.array([[feature.x, feature.y] for feature in features])
         indices = list(range(len(features)))
 
         # Recursively build tree
@@ -278,13 +263,13 @@ class Matcher:
                         query_feature.descriptors, candidate_feature.descriptors
                     )
 
-                    if ENABLE_DISTANCE_THRESHOLD and distance > self.distance_threshold:
+                    if ENABLE_DISTANCE_THRESHOLD and distance > self.config.distance_threshold:
                         continue
 
                     feature_matches.append(
                         Match(
-                            queryIdx=query_idx,
-                            trainIdx=candidate_idx,
+                            query_idx=query_idx,
+                            train_idx=candidate_idx,
                             distance=distance,
                             query_point=query_feature,
                             train_point=candidate_feature,
@@ -368,13 +353,13 @@ class Matcher:
 
                 distance = self._compute_descriptor_distance(query_feature.descriptors, train_feature.descriptors)
 
-                if ENABLE_DISTANCE_THRESHOLD and distance > self.distance_threshold:
+                if ENABLE_DISTANCE_THRESHOLD and distance > self.config.distance_threshold:
                     continue
 
                 feature_matches.append(
                     Match(
-                        queryIdx=query_idx,
-                        trainIdx=train_idx,
+                        query_idx=query_idx,
+                        train_idx=train_idx,
                         distance=distance,
                         query_point=query_feature,
                         train_point=train_feature,
@@ -389,14 +374,20 @@ class Matcher:
 
     def _compute_hamming_distance_jit(self, desc1: np.ndarray, desc2: np.ndarray) -> int:
         """Fast Hamming distance computation using Numba JIT."""
-        distance = 0
-        for i in range(min(len(desc1), len(desc2))):
-            xor = desc1[i] ^ desc2[i]
-            # Count bits using Brian Kernighan's algorithm
-            while xor:
-                distance += 1
-                xor &= xor - 1
-        return distance
+        from numba import jit
+
+        @jit(nopython=True)
+        def _hamming_distance_impl(d1: np.ndarray, d2: np.ndarray) -> int:
+            distance = 0
+            for i in range(min(len(d1), len(d2))):
+                xor = d1[i] ^ d2[i]
+                # Count bits using Brian Kernighan's algorithm
+                while xor:
+                    distance += 1
+                    xor &= xor - 1
+            return distance
+
+        return _hamming_distance_impl(desc1, desc2)
 
     def _compute_descriptor_distance(self, desc1: List[int], desc2: List[int]) -> float:
         """
@@ -448,7 +439,7 @@ class Matcher:
                 second_match = feature_matches[1]
 
                 # Apply ratio test
-                if best_match.distance < self.ratio_threshold * second_match.distance:
+                if best_match.distance < self.config.ratio_threshold * second_match.distance:
                     good_matches.append(best_match)
             elif len(feature_matches) == 1:
                 # Only one match found
@@ -466,7 +457,7 @@ class Matcher:
         Returns:
             Tuple of (homography matrix, inlier matches)
         """
-        if len(matches) < self.min_matches:
+        if len(matches) < self.config.min_matches:
             return None, []
 
         # Extract point correspondences
@@ -477,7 +468,7 @@ class Matcher:
         # Estimate homography using RANSAC
         try:
             homography, mask = cv2.findHomography(
-                src_pts, dst_pts, cv2.RANSAC, self.ransac_threshold, maxIters=2000, confidence=0.995
+                src_pts, dst_pts, cv2.RANSAC, self.config.ransac_threshold, maxIters=2000, confidence=0.995
             )
 
             if homography is None:
@@ -488,9 +479,13 @@ class Matcher:
 
             return homography, inlier_matches
 
-        except Exception as e:
-            if self.debug_mode:
-                print(f"Homography estimation failed: {e}")
+        except cv2.error as cv_error:
+            if self.config.debug_mode:
+                print(f"OpenCV error in homography estimation: {cv_error}")
+            return None, []
+        except Exception as exception:
+            if self.config.debug_mode:
+                print(f"Homography estimation failed: {exception}")
             return None, []
 
     def get_performance_stats(self) -> Dict:
@@ -515,17 +510,11 @@ class Matcher:
         self.cached_descriptors.clear()
 
 
-def compute_hough_matches(
-    keywidth: int, keyheight: int, querywidth: int, queryheight: int, matches: List[Match]
-) -> List[Match]:
+def compute_hough_matches(matches: List[Match]) -> List[Match]:
     """
     Apply Hough transform voting to filter matches by geometric consistency.
 
     Args:
-        keywidth: Template image width
-        keyheight: Template image height
-        querywidth: Query image width
-        queryheight: Query image height
         matches: Input matches
 
     Returns:
@@ -552,11 +541,11 @@ def compute_hough_matches(
         scale_idx = min(int(scale * scale_bins / 4.0), scale_bins - 1)
 
         # Compute translation
-        dx = query_pt.x - key_pt.x * scale
-        dy = query_pt.y - key_pt.y * scale
+        delta_x = query_pt.x - key_pt.x * scale
+        delta_y = query_pt.y - key_pt.y * scale
 
         # Convert to angle
-        angle = np.arctan2(dy, dx)
+        angle = np.arctan2(delta_y, delta_x)
         angle_idx = int((angle + np.pi) * hough_bins / (2 * np.pi)) % hough_bins
 
         accumulator[angle_idx, scale_idx] += 1

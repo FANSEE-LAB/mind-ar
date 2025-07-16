@@ -10,9 +10,11 @@ urls = {Repository = "https://github.com/FANSEE-LAB/mind-ar", Documentation = "h
 
 dependencies = [
     "numpy>=1.26.0; python_version >= '3.9'",
-    "opencv-python>=4.5.0; python_version >= '3.9'"
+    "opencv-python>=4.5.0; python_version >= '3.9'",
+    "msgpack>=1.0.0",
+    "numba>=0.59.0"
 ]
-python = ">=3.9"
+python = ">=3.9.0"
 
 optional-dependencies.performance = []
 
@@ -39,8 +41,18 @@ where = ["src"]
 
 [tool.black]
 line-length = 120
-target-version = ["py38"]
+
+[tool.pylint]
+disable = ["C0301"]
+extension-pkg-allow-list = ["cv2"]
 
 [tool.isort]
 profile = "black"
 line_length = 120
+
+[tool.poetry.dependencies]
+python = "^3.9"
+opencv-python = "^4.8.0"
+numpy = "^1.24.0"
+msgpack = "^1.0.0"
+numba = "^0.59.0"

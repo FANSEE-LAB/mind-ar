@@ -169,4 +169,7 @@ temp_*.png
 
 # Mind files for testing
 *.mind
-targets/ 
+targets/
+
+# PyPI configuration
+.pypirc

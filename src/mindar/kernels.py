@@ -246,9 +246,7 @@ def compute_orientation(image: np.ndarray, x: float, y: float, scale: float, num
         Dominant orientation in radians
     """
     # Determine region size based on scale
-    region_size = int(6 * scale)
-    if region_size < 3:
-        region_size = 3
+    region_size = max(int(6 * scale), 3)
 
     # Extract region
     x_int, y_int = int(x), int(y)

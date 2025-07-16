@@ -90,9 +90,9 @@ FREAK_RINGS = [
 # Build FREAK points list compatible with MindAR
 FREAKPOINTS = []
 for ring in FREAK_RINGS:
-    sigma = ring["sigma"]
+    RING_SIGMA = ring["sigma"]
     for point in ring["points"]:
-        FREAKPOINTS.append([sigma, point[0], point[1]])
+        FREAKPOINTS.append([RING_SIGMA, point[0], point[1]])
 
 # Comparison pairs count
 FREAK_COMPARISON_COUNT = (len(FREAKPOINTS) - 1) * len(FREAKPOINTS) // 2
@@ -128,14 +128,14 @@ class FreakDescriptor:
 
         descriptors = []
 
-        for x, y, scale, angle in keypoints:
-            descriptor = self._compute_single_descriptor(image, x, y, scale, angle)
+        for x_coord, y_coord, scale, angle in keypoints:
+            descriptor = self._compute_single_descriptor(image, x_coord, y_coord, scale, angle)
             descriptors.append(descriptor)
 
         return descriptors
 
     def _compute_single_descriptor(
-        self, image: np.ndarray, x: float, y: float, scale: float, angle: float
+        self, image: np.ndarray, x_coord: float, y_coord: float, scale: float, angle: float
     ) -> List[int]:
         """Compute FREAK descriptor for a single keypoint."""
         try:
@@ -145,18 +145,18 @@ class FreakDescriptor:
             cos_angle = math.cos(angle)
             sin_angle = math.sin(angle)
 
-            for sigma, px, py in self.freakpoints:
+            for point_sigma, point_x, point_y in self.freakpoints:
                 # Scale and rotate pattern point
-                scaled_px = px * sigma * scale * 20  # Scale factor for visibility
-                scaled_py = py * sigma * scale * 20
+                scaled_px = point_x * point_sigma * scale * 20  # Scale factor for visibility
+                scaled_py = point_y * point_sigma * scale * 20
 
                 # Rotate pattern point
                 rotated_px = scaled_px * cos_angle - scaled_py * sin_angle
                 rotated_py = scaled_px * sin_angle + scaled_py * cos_angle
 
                 # Sample location in image
-                sample_x = x + rotated_px
-                sample_y = y + rotated_py
+                sample_x = x_coord + rotated_px
+                sample_y = y_coord + rotated_py
 
                 # Sample intensity with bounds checking
                 intensity = self._sample_intensity(image, sample_x, sample_y)
@@ -166,7 +166,7 @@ class FreakDescriptor:
             descriptor_ints = []
             comparison_idx = 0
 
-            for desc_byte_idx in range(self.descriptor_count):
+            for _ in range(self.descriptor_count):
                 byte_value = 0
 
                 for bit_idx in range(8):
@@ -202,10 +202,10 @@ class FreakDescriptor:
                 count += 1
         return 0, 1  # Fallback
 
-    def _sample_intensity(self, image: np.ndarray, x: float, y: float) -> float:
+    def _sample_intensity(self, image: np.ndarray, x_coord: float, y_coord: float) -> float:
         """Sample intensity with bounds checking."""
-        x_int = int(round(x))
-        y_int = int(round(y))
+        x_int = int(round(x_coord))
+        y_int = int(round(y_coord))
 
         # Check bounds
         if x_int < 0 or x_int >= image.shape[1] or y_int < 0 or y_int >= image.shape[0]:

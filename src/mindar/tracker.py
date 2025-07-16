@@ -10,7 +10,6 @@ from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
-from scipy.ndimage import map_coordinates
 
 # Constants from MindAR
 AR2_DEFAULT_TS = 6
@@ -44,6 +43,20 @@ class ScreenPoint:
     y: float
 
 
+@dataclass
+class TrackerConfig:
+    """Configuration for the tracker"""
+
+    marker_dimensions: List[Tuple[int, int]]
+    tracking_data_list: List[List[Dict]]
+    projection_transform: np.ndarray
+    input_width: int
+    input_height: int
+    debug_mode: bool = False
+    enable_threading: bool = ENABLE_THREADING
+    enable_caching: bool = ENABLE_CACHING
+
+
 class Tracker:
     """
     MindAR Tracker - Complete Python port
@@ -56,47 +69,22 @@ class Tracker:
     - Edge device optimization
     """
 
-    def __init__(
-        self,
-        marker_dimensions: List[Tuple[int, int]],
-        tracking_data_list: List[List[Dict]],
-        projection_transform: np.ndarray,
-        input_width: int,
-        input_height: int,
-        debug_mode: bool = False,
-        enable_threading: bool = ENABLE_THREADING,
-        enable_caching: bool = ENABLE_CACHING,
-    ):
+    def __init__(self, config: TrackerConfig):
         """
         Initialize the tracker with marker data
 
         Args:
-            marker_dimensions: List of (width, height) tuples for each marker
-            tracking_data_list: List of tracking data for each marker
-            projection_transform: Camera projection matrix
-            input_width: Input image width
-            input_height: Input image height
-            debug_mode: Enable debug mode
-            enable_threading: Enable multi-threaded processing
-            enable_caching: Enable result caching
+            config: Tracker configuration object
         """
-        self.marker_dimensions = marker_dimensions
-        self.tracking_data_list = tracking_data_list
-        self.projection_transform = projection_transform
-        self.debug_mode = debug_mode
-        self.input_width = input_width
-        self.input_height = input_height
-        self.enable_threading = enable_threading
-        self.enable_caching = enable_caching
-
-        # Cache for computed results
-        self.cache = {}
+        self.config = config
+        self.pool = None
         self.cache_hits = 0
         self.cache_misses = 0
+        self.cache = {}
 
         # Extract tracking keyframes
         self.tracking_keyframe_list = []
-        for tracking_data in tracking_data_list:
+        for tracking_data in config.tracking_data_list:
             self.tracking_keyframe_list.append(tracking_data[TRACKING_KEYFRAME])
 
         # Prebuild feature and marker pixel tensors
@@ -112,26 +100,34 @@ class Tracker:
             self.image_pixels_list.append(image_pixels)
             self.image_properties_list.append(image_properties)
 
-        # Try to import threading if enabled
-        self.pool = None
-        if self.enable_threading:
+        # Initialize threading if enabled
+        self._init_threading()
+
+        # Initialize JIT compilation if enabled
+        self._init_jit()
+
+    def _init_threading(self):
+        """Initialize threading if available and enabled."""
+        if self.config.enable_threading:
             try:
+                # pylint: disable=import-outside-toplevel
                 from concurrent.futures import ThreadPoolExecutor
 
                 self.pool = ThreadPoolExecutor(max_workers=4)
             except ImportError:
-                self.enable_threading = False
+                self.config.enable_threading = False
                 print("Warning: Threading requested but threading module not available")
 
-        # Try to enable JIT compilation if available (optional dependency)
+    def _init_jit(self):
+        """Initialize JIT compilation if available and enabled."""
         if ENABLE_JIT:
-            try:
-                import numba  # type: ignore
+            # pylint: disable=import-outside-toplevel
+            import numba
 
-                self._compute_normalized_correlation = numba.jit(nopython=True)(self._compute_normalized_correlation)
-                print("JIT compilation enabled for performance-critical functions")
-            except ImportError:
-                print("Warning: JIT compilation requested but numba module not available")
+            self._compute_normalized_correlation_method = numba.jit(nopython=True)(
+                self._compute_normalized_correlation_method or self._compute_normalized_correlation_method
+            )
+            print("JIT compilation enabled for performance-critical functions")
 
     def track(self, input_image: np.ndarray, last_model_view_transform: np.ndarray, target_index: int) -> Dict:
         """
@@ -146,23 +142,20 @@ class Tracker:
             Tracking result with world/screen coordinates
         """
         start_time = time.time()
-        debug_extra = {}
 
         # Check cache if enabled
-        if self.enable_caching:
-            cache_key = f"{hash(input_image.tobytes())}-{hash(last_model_view_transform.tobytes())}-{target_index}"
-            if cache_key in self.cache:
-                self.cache_hits += 1
-                return self.cache[cache_key]
+        cache_key = self._generate_cache_key(input_image, last_model_view_transform, target_index)
+        if self.config.enable_caching and cache_key in self.cache:
+            self.cache_hits += 1
+            return self.cache[cache_key]
+
+        if self.config.enable_caching:
             self.cache_misses += 1
 
         # Build model-view-projection transform
         model_view_projection_transform = self._build_model_view_projection_transform(
-            self.projection_transform, last_model_view_transform
+            self.config.projection_transform, last_model_view_transform
         )
-
-        # Get target dimensions and keyframe
-        marker_width, marker_height = self.marker_dimensions[target_index]
 
         # Get prebuilt data
         feature_points = self.feature_points_list[target_index]
@@ -173,16 +166,44 @@ class Tracker:
         projected_image = self._compute_projection(model_view_projection_transform, input_image, target_index)
 
         # Compute matching (potentially using threading)
-        if self.enable_threading and self.pool is not None:
-            matching_points, similarities = self._compute_matching_threaded(
-                feature_points, image_pixels, image_properties, projected_image
-            )
-        else:
-            matching_points, similarities = self._compute_matching(
-                feature_points, image_pixels, image_properties, projected_image
-            )
+        matching_points, similarities = self._compute_matching_with_threading(
+            feature_points, image_pixels, image_properties, projected_image
+        )
 
         # Extract tracking results
+        result = self._extract_tracking_results(
+            matching_points, similarities, target_index, model_view_projection_transform, start_time, projected_image
+        )
+
+        # Cache result if enabled and we have a good track
+        if self.config.enable_caching and result.get("worldCoords"):
+            self._cache_result(cache_key, result)
+
+        return result
+
+    def _generate_cache_key(
+        self, input_image: np.ndarray, last_model_view_transform: np.ndarray, target_index: int
+    ) -> str:
+        """Generate cache key for the given parameters."""
+        return f"{hash(input_image.tobytes())}-{hash(last_model_view_transform.tobytes())}-{target_index}"
+
+    def _compute_matching_with_threading(self, feature_points, image_pixels, image_properties, projected_image):
+        """Compute matching with optional threading support."""
+        if self.config.enable_threading and self.pool is not None:
+            return self._compute_matching_threaded(feature_points, image_pixels, image_properties, projected_image)
+        else:
+            return self._compute_matching(feature_points, image_pixels, image_properties, projected_image)
+
+    def _extract_tracking_results(
+        self,
+        matching_points,
+        similarities,
+        target_index,
+        model_view_projection_transform,
+        start_time,
+        projected_image=None,
+    ):
+        """Extract and format tracking results."""
         tracking_frame = self.tracking_keyframe_list[target_index]
         world_coords = []
         screen_coords = []
@@ -207,9 +228,9 @@ class Tracker:
                     )
                 )
 
-        if self.debug_mode:
+        debug_extra = {}
+        if self.config.debug_mode:
             debug_extra = {
-                "projectedImage": projected_image.tolist(),
                 "matchingPoints": matching_points.tolist(),
                 "goodTrack": good_track,
                 "trackedPoints": [(p.x, p.y) for p in screen_coords],
@@ -218,18 +239,20 @@ class Tracker:
                 "cacheMisses": self.cache_misses,
             }
 
-        result = {"worldCoords": world_coords, "screenCoords": screen_coords, "debugExtra": debug_extra}
+            # Only include projected image if available
+            if projected_image is not None:
+                debug_extra["projectedImage"] = projected_image.tolist()
 
-        # Cache result if enabled and we have a good track
-        if self.enable_caching and len(good_track) > 0:
-            # Only keep the last 20 results to avoid memory bloat
-            if len(self.cache) > 20:
-                old_keys = list(self.cache.keys())[: len(self.cache) - 20]
-                for key in old_keys:
-                    del self.cache[key]
-            self.cache[cache_key] = result
+        return {"worldCoords": world_coords, "screenCoords": screen_coords, "debugExtra": debug_extra}
 
-        return result
+    def _cache_result(self, cache_key: str, result: Dict):
+        """Cache the tracking result."""
+        # Only keep the last 20 results to avoid memory bloat
+        if len(self.cache) > 20:
+            old_keys = list(self.cache.keys())[: len(self.cache) - 20]
+            for key in old_keys:
+                del self.cache[key]
+        self.cache[cache_key] = result
 
     def _build_model_view_projection_transform(
         self, projection_transform: np.ndarray, model_view_transform: np.ndarray
@@ -248,7 +271,7 @@ class Tracker:
     ) -> np.ndarray:
         """Compute projected image using model-view-projection transform (optimized)"""
         # Get target dimensions
-        marker_width, marker_height = self.marker_dimensions[target_index]
+        marker_width, marker_height = self.config.marker_dimensions[target_index]
 
         # Create coordinate grids
         y_coords, x_coords = np.meshgrid(np.arange(marker_height), np.arange(marker_width), indexing="ij")
@@ -263,9 +286,6 @@ class Tracker:
         screen_x = screen_x.reshape(marker_height, marker_width)
         screen_y = screen_y.reshape(marker_height, marker_width)
 
-        # Create mask for valid coordinates
-        valid_mask = (screen_x >= 0) & (screen_x < self.input_width) & (screen_y >= 0) & (screen_y < self.input_height)
-
         # Initialize projected image
         projected_image = np.zeros((marker_height, marker_width), dtype=np.float32)
 
@@ -275,9 +295,12 @@ class Tracker:
         else:
             input_gray = input_image.astype(np.float32)
 
-        # Use scipy.ndimage.map_coordinates for efficient bilinear interpolation
-        coords_for_interp = np.stack([screen_y[valid_mask], screen_x[valid_mask]], axis=0)
-        projected_image[valid_mask] = map_coordinates(input_gray, coords_for_interp, order=1, mode="constant", cval=0)
+        # Use OpenCV's cv2.remap for bilinear interpolation
+        map_x = screen_x.astype(np.float32)
+        map_y = screen_y.astype(np.float32)
+        projected_image = cv2.remap(
+            input_gray, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0
+        )
 
         return projected_image
 
@@ -289,10 +312,8 @@ class Tracker:
         projected_image: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Compute matching using multi-threading for better performance"""
-        from concurrent.futures import ThreadPoolExecutor
 
         # Parameters
-        template_size = AR2_DEFAULT_TS * 2 + 1
         target_height, target_width = projected_image.shape
         feature_count = len(feature_points)
 
@@ -301,43 +322,51 @@ class Tracker:
 
         # Function to process one feature point
         def process_feature(feature_idx):
-            feature = feature_points[feature_idx]
-            center_x = int(feature[0] * image_properties[2])  # scale
-            center_y = int(feature[1] * image_properties[2])
-
-            best_sim = -1
-            best_x, best_y = center_x, center_y
-
-            # Search in local region
-            for search_y in range(center_y - AR2_SEARCH_SIZE, center_y + AR2_SEARCH_SIZE + 1, AR2_SEARCH_GAP):
-                for search_x in range(center_x - AR2_SEARCH_SIZE, center_x + AR2_SEARCH_SIZE + 1, AR2_SEARCH_GAP):
-                    # Check bounds
-                    if (
-                        search_x < AR2_DEFAULT_TS
-                        or search_x >= target_width - AR2_DEFAULT_TS
-                        or search_y < AR2_DEFAULT_TS
-                        or search_y >= target_height - AR2_DEFAULT_TS
-                    ):
-                        continue
-
-                    # Compute normalized cross-correlation
-                    sim = self._compute_normalized_correlation(
-                        image_pixels, projected_image, center_x, center_y, search_x, search_y, template_size
-                    )
-
-                    if sim > best_sim:
-                        best_sim = sim
-                        best_x, best_y = search_x, search_y
-
-            return feature_idx, [best_x, best_y], best_sim
+            return self._process_single_feature(
+                feature_idx, feature_points, image_properties, projected_image, target_height, target_width
+            )
 
         # Process features in parallel
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with self.pool as executor:
             for idx, point, sim in executor.map(process_feature, range(feature_count)):
                 matching_points[idx] = point
                 similarities[idx] = sim
 
         return np.array(matching_points), np.array(similarities)
+
+    def _process_single_feature(
+        self, feature_idx, feature_points, image_properties, projected_image, target_height, target_width
+    ):
+        """Process a single feature for matching."""
+        feature = feature_points[feature_idx]
+        center_x = int(feature[0] * image_properties[2])  # scale
+        center_y = int(feature[1] * image_properties[2])
+
+        best_sim = -1
+        best_x, best_y = center_x, center_y
+
+        # Search in local region
+        for search_y in range(center_y - AR2_SEARCH_SIZE, center_y + AR2_SEARCH_SIZE + 1, AR2_SEARCH_GAP):
+            for search_x in range(center_x - AR2_SEARCH_SIZE, center_x + AR2_SEARCH_SIZE + 1, AR2_SEARCH_GAP):
+                # Check bounds
+                if (
+                    search_x < AR2_DEFAULT_TS
+                    or search_x >= target_width - AR2_DEFAULT_TS
+                    or search_y < AR2_DEFAULT_TS
+                    or search_y >= target_height - AR2_DEFAULT_TS
+                ):
+                    continue
+
+                # Compute normalized cross-correlation
+                sim = self._compute_normalized_correlation_impl(
+                    projected_image, None, center_x, center_y, search_x, search_y
+                )
+
+                if sim > best_sim:
+                    best_sim = sim
+                    best_x, best_y = search_x, search_y
+
+        return feature_idx, [best_x, best_y], best_sim
 
     def _compute_matching(
         self,
@@ -347,9 +376,6 @@ class Tracker:
         projected_image: np.ndarray,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Compute matching between feature points and projected image"""
-        # Simplified matching - MindAR uses complex GPU implementation
-
-        template_size = AR2_DEFAULT_TS * 2 + 1
         target_height, target_width = projected_image.shape
         feature_count = len(feature_points)
 
@@ -357,60 +383,48 @@ class Tracker:
         similarities = []
 
         for feature_idx in range(feature_count):
-            feature = feature_points[feature_idx]
-            center_x = int(feature[0] * image_properties[2])  # scale
-            center_y = int(feature[1] * image_properties[2])
-
-            best_sim = -1
-            best_x, best_y = center_x, center_y
-
-            # Search in local region
-            for search_y in range(center_y - AR2_SEARCH_SIZE, center_y + AR2_SEARCH_SIZE + 1, AR2_SEARCH_GAP):
-                for search_x in range(center_x - AR2_SEARCH_SIZE, center_x + AR2_SEARCH_SIZE + 1, AR2_SEARCH_GAP):
-                    # Check bounds
-                    if (
-                        search_x < AR2_DEFAULT_TS
-                        or search_x >= target_width - AR2_DEFAULT_TS
-                        or search_y < AR2_DEFAULT_TS
-                        or search_y >= target_height - AR2_DEFAULT_TS
-                    ):
-                        continue
-
-                    # Compute normalized cross-correlation
-                    sim = self._compute_normalized_correlation(
-                        image_pixels, projected_image, center_x, center_y, search_x, search_y, template_size
-                    )
-
-                    if sim > best_sim:
-                        best_sim = sim
-                        best_x, best_y = search_x, search_y
-
-            matching_points.append([best_x, best_y])
-            similarities.append(best_sim)
+            _, point, sim = self._process_single_feature(
+                feature_idx, feature_points, image_properties, projected_image, target_height, target_width
+            )
+            matching_points.append(point)
+            similarities.append(sim)
 
         return np.array(matching_points), np.array(similarities)
 
-    def _compute_normalized_correlation(
+    def _compute_normalized_correlation_impl(
         self,
-        template_pixels: np.ndarray,
         target_pixels: np.ndarray,
-        template_center_x: int,
-        template_center_y: int,
-        target_center_x: int,
-        target_center_y: int,
-        template_size: int,
+        template_pixels: np.ndarray = None,
+        center_x: int = None,
+        center_y: int = None,
+        search_x: int = None,
+        search_y: int = None,
+        template_size: int = None,
     ) -> float:
         """Compute normalized cross-correlation (optimized)"""
         # Extract template and target regions
-        half_size = template_size // 2
+        if template_size is None:
+            if template_pixels is not None:
+                half_size = template_pixels.shape[0] // 2
+            else:
+                half_size = AR2_DEFAULT_TS
+        else:
+            half_size = template_size // 2
 
         # Template region
-        template_start_x = template_center_x - half_size
-        template_end_x = template_center_x + half_size + 1
-        template_start_y = template_center_y - half_size
-        template_end_y = template_center_y + half_size + 1
+        template_start_x = 0
+        template_end_x = template_pixels.shape[1] if template_pixels is not None else half_size * 2 + 1
+        template_start_y = 0
+        template_end_y = template_pixels.shape[0] if template_pixels is not None else half_size * 2 + 1
 
         # Target region
+        if center_x is not None and center_y is not None and search_x is not None and search_y is not None:
+            target_center_x = search_x
+            target_center_y = search_y
+        else:
+            target_center_x = target_pixels.shape[1] // 2
+            target_center_y = target_pixels.shape[0] // 2
+
         target_start_x = target_center_x - half_size
         target_end_x = target_center_x + half_size + 1
         target_start_y = target_center_y - half_size
@@ -419,9 +433,9 @@ class Tracker:
         # Check bounds
         if (
             template_start_x < 0
-            or template_end_x > template_pixels.shape[1]
+            or template_end_x > (template_pixels.shape[1] if template_pixels is not None else target_pixels.shape[1])
             or template_start_y < 0
-            or template_end_y > template_pixels.shape[0]
+            or template_end_y > (template_pixels.shape[0] if template_pixels is not None else target_pixels.shape[0])
             or target_start_x < 0
             or target_end_x > target_pixels.shape[1]
             or target_start_y < 0
@@ -430,7 +444,11 @@ class Tracker:
             return -1.0
 
         # Extract regions
-        template_region = template_pixels[template_start_y:template_end_y, template_start_x:template_end_x]
+        if template_pixels is not None:
+            template_region = template_pixels[template_start_y:template_end_y, template_start_x:template_end_x]
+        else:
+            template_region = target_pixels[target_start_y:target_end_y, target_start_x:target_end_x]
+
         target_region = target_pixels[target_start_y:target_end_y, target_start_x:target_end_x]
 
         # Fast vectorized operations for correlation computation
@@ -488,4 +506,19 @@ class Tracker:
             [tracking_frame["width"], tracking_frame["height"], tracking_frame["scale"]], dtype=np.float32
         )
 
-        return np.array(feature_points), image_pixels, image_properties
+        return np.array(feature_points), np.array(image_pixels), image_properties
+
+    def compute_normalized_correlation(
+        self,
+        target_pixels: np.ndarray,
+        template_pixels: np.ndarray = None,
+        center_x: int = None,
+        center_y: int = None,
+        search_x: int = None,
+        search_y: int = None,
+        template_size: int = None,
+    ) -> float:
+        """Compute normalized cross-correlation (public interface)"""
+        return self._compute_normalized_correlation_impl(
+            target_pixels, template_pixels, center_x, center_y, search_x, search_y, template_size
+        )

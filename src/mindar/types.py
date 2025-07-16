@@ -51,7 +51,8 @@ class FeaturePoint:
             "scale": float(self.scale),
             "angle": float(self.angle),
             "maxima": bool(self.maxima),
-            "confidence": float(self.confidence),
+            "response": float(self.response),
+            "quality": float(self.quality if self.quality is not None else 0.5),
             # Convert descriptors to integers for serialization
             "descriptors": [int(d) for d in self.descriptors[:8]],  # Store first 8 for efficiency
         }
@@ -65,8 +66,9 @@ class FeaturePoint:
             scale=data["scale"],
             angle=data["angle"],
             maxima=data["maxima"],
-            confidence=data.get("confidence", 1.0),
+            response=data.get("response", 1.0),
             descriptors=data.get("descriptors", []),
+            quality=data.get("quality", 0.5),
         )
 
 
@@ -99,7 +101,7 @@ class Match:
             "query_point": self.query_point.to_dict(),
             "key_point": self.key_point.to_dict(),
             "distance": float(self.distance),
-            "confidence": float(self.confidence),
+            "confidence": float(self.confidence if self.confidence is not None else 0.0),
         }
 
 

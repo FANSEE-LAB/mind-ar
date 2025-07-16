@@ -37,11 +37,13 @@ class MindARCompiler:
         Returns:
             True if compilation successful
         """
+
+        targets = []
         try:
             # Process each image
-            targets = []
             for i, image_path in enumerate(image_paths):
-                print(f"Processing image {i+1}/{len(image_paths)}: {image_path}")
+                if self.debug_mode:
+                    print(f"Processing image {i+1}/{len(image_paths)}: {image_path}")
 
                 # Load image
                 image = cv2.imread(str(image_path))
@@ -52,55 +54,10 @@ class MindARCompiler:
                 # Convert to grayscale
                 gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-                try:
-                    detector = Detector(method="hybrid", debug_mode=self.debug_mode)
-                    result = detector.detect(gray)
-                    feature_points = result["feature_points"]
-
-                    maxima_points = []
-                    minima_points = []
-
-                    for fp in feature_points:
-                        if fp.maxima:
-                            maxima_points.append(
-                                {
-                                    "x": fp.x,
-                                    "y": fp.y,
-                                    "scale": fp.scale,
-                                    "angle": fp.angle,
-                                    "descriptors": fp.descriptors,
-                                }
-                            )
-                        else:
-                            minima_points.append(
-                                {
-                                    "x": fp.x,
-                                    "y": fp.y,
-                                    "scale": fp.scale,
-                                    "angle": fp.angle,
-                                    "descriptors": fp.descriptors,
-                                }
-                            )
-
-                    # (Optional) Clustering skipped; FREAK matching uses raw points
-                except Exception as e:
-                    print(f"⚠️ Feature extraction failed for {image_path}: {e}")
-                    # Fallback: create empty clusters
-                    maxima_points = []
-                    minima_points = []
-
-                # Create target data (store all feature points for matching)
-                target_data = {
-                    "width": image.shape[1],
-                    "height": image.shape[0],
-                    "scale": 1.0,
-                    "featurePoints": maxima_points + minima_points,
-                }
-
-                targets.append(target_data)
-                print(
-                    f"  - Extracted {len(maxima_points) + len(minima_points)} features ({len(maxima_points)} maxima, {len(minima_points)} minima)"
-                )
+                # Process the image and extract features
+                target_data = self._process_single_image(gray, image, image_path)
+                if target_data:
+                    targets.append(target_data)
 
             # Create .mind file structure
             mind_data = {"v": 2, "dataList": targets}  # Version
@@ -110,15 +67,68 @@ class MindARCompiler:
                 mind_data["metadata"] = metadata
 
             # Serialize to MessagePack
-            with open(output_path, "wb") as f:
-                f.write(msgpack.packb(mind_data))
+            with open(output_path, "wb") as file:
+                file.write(msgpack.packb(mind_data))
 
             print(f"✅ Compiled {len(targets)} targets to {output_path}")
             return True
 
-        except Exception as e:
-            print(f"❌ Compilation failed: {e}")
+        except (IOError, OSError) as io_error:
+            print(f"❌ File I/O error during compilation: {io_error}")
             return False
+        except ValueError as value_error:
+            print(f"❌ Data processing error during compilation: {value_error}")
+            return False
+        except Exception as exception:
+            print(f"❌ Compilation failed: {exception}")
+            return False
+
+    def _process_single_image(self, gray, image, image_path) -> Optional[Dict]:
+        """Process a single image and extract features."""
+        try:
+            detector = Detector(method="hybrid", debug_mode=self.debug_mode)
+            result = detector.detect(gray)
+            feature_points = result["feature_points"]
+
+            maxima_points = []
+            minima_points = []
+
+            for feature_point in feature_points:
+                point_data = {
+                    "x": feature_point.x,
+                    "y": feature_point.y,
+                    "scale": feature_point.scale,
+                    "angle": feature_point.angle,
+                    "descriptors": feature_point.descriptors,
+                }
+
+                if feature_point.maxima:
+                    maxima_points.append(point_data)
+                else:
+                    minima_points.append(point_data)
+
+            # Create target data (store all feature points for matching)
+            target_data = {
+                "width": image.shape[1],
+                "height": image.shape[0],
+                "scale": 1.0,
+                "featurePoints": maxima_points + minima_points,
+            }
+
+            if self.debug_mode:
+                print(
+                    f"  - Extracted {len(maxima_points) + len(minima_points)} features "
+                    f"({len(maxima_points)} maxima, {len(minima_points)} minima)"
+                )
+
+            return target_data
+
+        except RuntimeError as runtime_error:
+            print(f"⚠️ Feature extraction failed for {image_path}: {runtime_error}")
+            return None
+        except Exception as exception:
+            print(f"⚠️ Unexpected error processing {image_path}: {exception}")
+            return None
 
     def _build_hierarchical_cluster(self, points: List[Dict]) -> Dict:
         """Build hierarchical clustering for points"""
@@ -173,11 +183,11 @@ class MindARCompiler:
         metadata_file = input_path / "metadata.json"
         if metadata_file.exists():
             try:
-                with open(metadata_file, "r") as f:
-                    metadata = json.load(f)
+                with open(metadata_file, "r", encoding="utf-8") as file:
+                    metadata = json.load(file)
                 print(f"📋 Loaded metadata from {metadata_file}")
-            except Exception as e:
-                print(f"⚠️ Could not load metadata: {e}")
+            except (IOError, json.JSONDecodeError) as json_error:
+                print(f"⚠️ Could not load metadata: {json_error}")
 
         return self.compile_images(image_paths, output_path, metadata)
 
@@ -191,9 +201,10 @@ class MindARCompiler:
         Returns:
             Parsed mind data or None if failed
         """
+
         try:
-            with open(mind_path, "rb") as f:
-                data = msgpack.unpackb(f.read(), raw=False)
+            with open(mind_path, "rb") as file:
+                data = msgpack.unpackb(file.read(), raw=False)
 
             if data.get("v") != 2:
                 print(f"⚠️ Unsupported .mind file version: {data.get('v')}")
@@ -201,6 +212,16 @@ class MindARCompiler:
 
             return data
 
-        except Exception as e:
-            print(f"❌ Failed to load .mind file: {e}")
+        except (IOError, OSError) as io_error:
+            print(f"❌ Failed to read .mind file: {io_error}")
+            return None
+        except (
+            msgpack.exceptions.ExtraData,
+            msgpack.exceptions.UnpackException,
+            msgpack.exceptions.UnpackValueError,
+        ) as msgpack_error:
+            print(f"❌ Failed to parse .mind file: {msgpack_error}")
+            return None
+        except Exception as exception:
+            print(f"❌ Unexpected error loading .mind file: {exception}")
             return None

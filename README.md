@@ -5,16 +5,35 @@ High-performance MindAR implementation for real-time image recognition on edge d
 ## Features
 
 - **MindAR Compatible**: Full compatibility with MindAR .mind file format
-- **High Performance**: Optimized for Raspberry Pi and edge devices
+- **High Performance**: Optimized with numba JIT compilation for edge devices
 - **Real-time Detection**: Efficient feature detection and matching
-- **Pure Python**: No complex dependencies, easy deployment
+- **Modern Architecture**: Clean configuration-based API with dataclasses
+- **Type Safe**: Full type hints and proper error handling
+- **Production Ready**: Comprehensive testing and linting (pylint score 7.5+)
 
 ## Installation
 
+### From PyPI (Recommended)
+
 ```bash
-cd mindar
+pip install mindar
+```
+
+### From Source
+
+```bash
+git clone https://github.com/FANSEE-LAB/mind-ar.git
+cd mind-ar
 pip install -e .
 ```
+
+### Requirements
+
+- Python >= 3.9 (required for numba optimization)
+- OpenCV
+- NumPy
+- msgpack (for .mind file format)
+- numba (for performance optimization)
 
 ## Usage
 
@@ -23,10 +42,23 @@ pip install -e .
 ```python
 import cv2
 from mindar import Detector, Matcher, MindARCompiler
+from mindar.types import DetectorConfig, MatcherConfig
 
-# Load target images and create detector
-detector = Detector(width=640, height=480)
-matcher = Matcher()
+# Configure detector with new configuration system
+detector_config = DetectorConfig(
+    method="super_hybrid",
+    max_features=1000,
+    debug_mode=False
+)
+detector = Detector(detector_config)
+
+# Configure matcher
+matcher_config = MatcherConfig(
+    ratio_threshold=0.75,
+    min_matches=8,
+    debug_mode=False
+)
+matcher = Matcher(matcher_config)
 
 # Detect features in image
 image = cv2.imread("target.jpg", cv2.IMREAD_GRAYSCALE)
@@ -39,9 +71,10 @@ print(f"Detected {len(feature_points)} features")
 ### Compile .mind Files
 
 ```python
-from mindar import MindARCompiler
+from mindar.compiler import MindARCompiler
 
-compiler = MindARCompiler()
+# Initialize compiler with debug mode
+compiler = MindARCompiler(debug_mode=True)
 
 # Compile images to .mind file
 success = compiler.compile_directory("./images", "./targets.mind")
@@ -50,6 +83,7 @@ if success:
 
 # Load compiled targets
 mind_data = compiler.load_mind_file("./targets.mind")
+print(f"Loaded {len(mind_data['dataList'])} targets")
 ```
 
 ## Performance

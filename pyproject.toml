@@ -1,8 +1,11 @@
 [tool.poetry]
 name = "mindar"
 version = "0.1.0"
-description = "High-performance MindAR implementation for real-time image recognition on edge devices"
-authors = ["FANSEE <info@fansee.studio>"]
+description = "High-performance MindAR implementation for real-time image recognition on edge devices. Developed by FANSEE LAB."
+authors = ["FANSEE LAB <info@fansee.com>"]
+maintainers = ["FANSEE LAB <info@fansee.com>"]
+homepage = "https://fansee.com"
+license = "MIT"
 readme = "README.md"
 packages = [{include = "mindar", from = "src"}]
 
@@ -44,4 +47,4 @@ target-version = ["py38"]
 
 [tool.isort]
 profile = "black"
-line_length = 120 
+line_length = 120

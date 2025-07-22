@@ -11,6 +11,9 @@ from typing import Dict, List, Tuple
 import cv2
 import numpy as np
 
+# Import JIT utilities
+from .jit import NUMBA_AVAILABLE, get_jit_info
+
 # Constants from MindAR
 AR2_DEFAULT_TS = 6
 AR2_DEFAULT_TS_GAP = 1
@@ -23,7 +26,6 @@ PRECISION_ADJUST = 1000
 # Performance optimization settings
 ENABLE_THREADING = True  # Enable multi-threaded processing
 ENABLE_CACHING = True  # Enable result caching to avoid redundant computation
-ENABLE_JIT = False  # Enable Numba JIT compilation if available
 
 
 @dataclass
@@ -120,14 +122,12 @@ class Tracker:
 
     def _init_jit(self):
         """Initialize JIT compilation if available and enabled."""
-        if ENABLE_JIT:
-            # pylint: disable=import-outside-toplevel
-            import numba
-
-            self._compute_normalized_correlation_method = numba.jit(nopython=True)(
-                self._compute_normalized_correlation_method or self._compute_normalized_correlation_method
+        if NUMBA_AVAILABLE:
+            print(
+                f"JIT compilation enabled for performance-critical functions (numba {get_jit_info()['numba_version']})"
             )
-            print("JIT compilation enabled for performance-critical functions")
+        else:
+            print("JIT compilation not available - using pure Python implementations")
 
     def track(self, input_image: np.ndarray, last_model_view_transform: np.ndarray, target_index: int) -> Dict:
         """
@@ -243,7 +243,20 @@ class Tracker:
             if projected_image is not None:
                 debug_extra["projectedImage"] = projected_image.tolist()
 
-        return {"worldCoords": world_coords, "screenCoords": screen_coords, "debugExtra": debug_extra}
+        # Calculate tracking time
+        tracking_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+
+        # For now, return the input model-view transform as the result
+        # In a real implementation, this would be refined based on tracking results
+        model_view_transform = np.eye(3)  # Placeholder - should be refined based on tracking
+
+        return {
+            "worldCoords": world_coords,
+            "screenCoords": screen_coords,
+            "modelViewTransform": model_view_transform,
+            "trackingTime": tracking_time,
+            "debugExtra": debug_extra,
+        }
 
     def _cache_result(self, cache_key: str, result: Dict):
         """Cache the tracking result."""
@@ -326,8 +339,10 @@ class Tracker:
                 feature_idx, feature_points, image_properties, projected_image, target_height, target_width
             )
 
-        # Process features in parallel
-        with self.pool as executor:
+        # Process features in parallel - create new executor for each call
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
             for idx, point, sim in executor.map(process_feature, range(feature_count)):
                 matching_points[idx] = point
                 similarities[idx] = sim
@@ -477,13 +492,23 @@ class Tracker:
         self, model_view_projection_transform: np.ndarray, world_x: float, world_y: float
     ) -> ScreenPoint:
         """Compute screen coordinates from world coordinates"""
-        # Apply model-view-projection transform
-        world_coords = np.array([world_x, world_y, 0, 1])
-        screen_coords = model_view_projection_transform @ world_coords
+        # For 3x3 matrix, we need to handle homogeneous coordinates differently
+        if model_view_projection_transform.shape == (3, 3):
+            # Convert to homogeneous coordinates and apply transform
+            world_coords = np.array([world_x, world_y, 1])
+            screen_coords = model_view_projection_transform @ world_coords
 
-        # Perspective divide
-        screen_x = screen_coords[0] / screen_coords[3]
-        screen_y = screen_coords[1] / screen_coords[3]
+            # For 3x3 matrix, no perspective divide needed
+            screen_x = screen_coords[0]
+            screen_y = screen_coords[1]
+        else:
+            # For 4x4 matrix, use full homogeneous coordinates
+            world_coords = np.array([world_x, world_y, 0, 1])
+            screen_coords = model_view_projection_transform @ world_coords
+
+            # Perspective divide
+            screen_x = screen_coords[0] / screen_coords[3]
+            screen_y = screen_coords[1] / screen_coords[3]
 
         return ScreenPoint(x=screen_x, y=screen_y)
 

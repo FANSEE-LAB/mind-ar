@@ -66,6 +66,11 @@ class MindARCompiler:
             if metadata:
                 mind_data["metadata"] = metadata
 
+            # Check if any targets were successfully processed
+            if not targets:
+                print(f"❌ No valid targets found in {len(image_paths)} images")
+                return False
+
             # Serialize to MessagePack
             with open(output_path, "wb") as file:
                 file.write(msgpack.packb(mind_data))
@@ -86,7 +91,10 @@ class MindARCompiler:
     def _process_single_image(self, gray, image, image_path) -> Optional[Dict]:
         """Process a single image and extract features."""
         try:
-            detector = Detector(method="hybrid", debug_mode=self.debug_mode)
+            from .detector import DetectorConfig
+
+            config = DetectorConfig(method="hybrid", debug_mode=self.debug_mode)
+            detector = Detector(config)
             result = detector.detect(gray)
             feature_points = result["feature_points"]
 

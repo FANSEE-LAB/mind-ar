@@ -1,6 +1,6 @@
 [project]
 name = "mindar"
-version = "0.1.2"
+version = "0.1.3"
 description = "High-performance MindAR implementation for real-time image recognition on edge devices. Developed by FANSEE LAB."
 authors = [{name = "FANSEE LAB", email = "info@fansee.com"}]
 maintainers = [{name = "FANSEE LAB", email = "info@fansee.com"}]
@@ -12,11 +12,14 @@ dependencies = [
     "numpy>=1.26.0; python_version >= '3.9'",
     "opencv-python>=4.5.0; python_version >= '3.9'",
     "msgpack>=1.0.0",
-    "numba>=0.59.0"
+    "pytest (>=8.4.1,<9.0.0)"
 ]
 python = ">=3.9.0"
 
-optional-dependencies.performance = []
+optional-dependencies.performance = [
+    # Optional: JIT acceleration for best performance
+    "numba>=0.59.0"
+]
 
 optional-dependencies.dev = [
     "pytest>=8.0.0; python_version >= '3.8'",
@@ -59,4 +62,10 @@ numba = "^0.59.0"
 
 [tool.poetry.group.dev.dependencies]
 twine = "^6.1.0"
-
+pytest = "^8.4.1"
+pytest-cov = "^6.2.1"
+black = "^25.1.0"
+isort = "^6.0.1"
+flake8 = "^7.3.0"
+bandit = "^1.8.6"
+psutil = "^7.0.0"

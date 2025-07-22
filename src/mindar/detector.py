@@ -1,8 +1,9 @@
 """
-High-performance feature detector for ARtify.
+MindAR-compatible detector.
 
-This module provides optimized feature detection for real-time AR applications,
-focusing on edge device performance with minimal dependencies.
+This module provides high-performance feature detection algorithms,
+including Harris corner detection with edge-device optimizations.
+Supports dynamic JIT compilation for optimal performance.
 """
 
 import time
@@ -11,11 +12,9 @@ from typing import Dict, List
 
 import cv2
 import numpy as np
-from numba import jit
 
+from .jit import _harris_response_jit_impl
 from .types import FeaturePoint
-
-NUMBA_AVAILABLE = True
 
 # Constants optimized for real-time performance
 DEFAULT_MAX_FEATURES = 1000  # Increased for better matching
@@ -606,41 +605,19 @@ class Detector:
         }
 
 
-@jit(nopython=True)
 def fast_harris_response(image: np.ndarray, x_coord: int, y_coord: int, window_size: int = 3) -> float:
     """
-    Fast Harris corner response computation using Numba JIT.
-    Only used if Numba is available.
+    Fast Harris corner response computation.
+
+    Uses JIT compilation if numba is available, otherwise falls back to pure Python.
+
+    Args:
+        image: Input image (grayscale)
+        x_coord: X coordinate of the point
+        y_coord: Y coordinate of the point
+        window_size: Window size for gradient computation
+
+    Returns:
+        Harris corner response value
     """
-    if (
-        x_coord < window_size
-        or x_coord >= image.shape[1] - window_size
-        or y_coord < window_size
-        or y_coord >= image.shape[0] - window_size
-    ):
-        return 0.0
-
-    grad_xx = 0.0
-    grad_yy = 0.0
-    grad_xy = 0.0
-
-    for delta_y in range(-window_size // 2, window_size // 2 + 1):
-        for delta_x in range(-window_size // 2, window_size // 2 + 1):
-            grad_x = (
-                image[y_coord + delta_y, x_coord + delta_x + 1] - image[y_coord + delta_y, x_coord + delta_x - 1]
-            ) * 0.5
-            grad_y = (
-                image[y_coord + delta_y + 1, x_coord + delta_x] - image[y_coord + delta_y - 1, x_coord + delta_x]
-            ) * 0.5
-
-            grad_xx += grad_x * grad_x
-            grad_yy += grad_y * grad_y
-            grad_xy += grad_x * grad_y
-
-    det = grad_xx * grad_yy - grad_xy * grad_xy
-    trace = grad_xx + grad_yy
-
-    if trace == 0:
-        return 0.0
-
-    return det - DEFAULT_HARRIS_K * (trace * trace)
+    return _harris_response_jit_impl(image, x_coord, y_coord, window_size, DEFAULT_HARRIS_K)

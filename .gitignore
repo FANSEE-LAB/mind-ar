@@ -167,6 +167,12 @@ test_*.png
 temp_*.jpg
 temp_*.png
 
+# Test data (generated images and temporary files)
+tests/test_data/images/
+tests/test_data/*.png
+tests/test_data/*.jpg
+tests/test_data/*.jpeg
+
 # Mind files for testing
 *.mind
 targets/

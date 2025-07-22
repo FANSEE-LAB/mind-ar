@@ -1,9 +1,9 @@
 """
-High-performance feature matcher.
+MindAR-compatible matcher.
 
-This module provides optimized feature matching for real-time AR applications,
-including hierarchical clustering, efficient Hamming distance computation,
-and robust homography estimation.
+This module provides high-performance feature matching algorithms,
+including binary descriptor matching with Hamming distance computation.
+Compatible with MindAR's matching pipeline and optimized for edge devices.
 """
 
 import time
@@ -13,9 +13,8 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from .jit import NUMBA_AVAILABLE, _hamming_distance_jit_impl
 from .types import FeaturePoint
-
-NUMBA_AVAILABLE = True
 
 # Constants optimized for real-time performance
 DEFAULT_RATIO_THRESHOLD = 0.75
@@ -373,21 +372,19 @@ class Matcher:
         return matches_per_query
 
     def _compute_hamming_distance_jit(self, desc1: np.ndarray, desc2: np.ndarray) -> int:
-        """Fast Hamming distance computation using Numba JIT."""
-        from numba import jit
+        """
+        Fast Hamming distance computation.
 
-        @jit(nopython=True)
-        def _hamming_distance_impl(d1: np.ndarray, d2: np.ndarray) -> int:
-            distance = 0
-            for i in range(min(len(d1), len(d2))):
-                xor = d1[i] ^ d2[i]
-                # Count bits using Brian Kernighan's algorithm
-                while xor:
-                    distance += 1
-                    xor &= xor - 1
-            return distance
+        Uses JIT compilation if numba is available, otherwise falls back to pure Python.
 
-        return _hamming_distance_impl(desc1, desc2)
+        Args:
+            desc1: First descriptor array
+            desc2: Second descriptor array
+
+        Returns:
+            Hamming distance between descriptors
+        """
+        return _hamming_distance_jit_impl(desc1, desc2)
 
     def _compute_descriptor_distance(self, desc1: List[int], desc2: List[int]) -> float:
         """
@@ -404,10 +401,8 @@ class Matcher:
             return 1.0
 
         if NUMBA_AVAILABLE:
-            # Use fast Numba implementation
-            desc1_array = np.array(desc1, dtype=np.uint32)
-            desc2_array = np.array(desc2, dtype=np.uint32)
-            hamming_dist = self._compute_hamming_distance_jit(desc1_array, desc2_array)
+            # Use fast Numba implementation - pass lists directly to avoid type inference issues
+            hamming_dist = self._compute_hamming_distance_jit(desc1, desc2)
         else:
             # Fallback to Python implementation
             hamming_dist = 0

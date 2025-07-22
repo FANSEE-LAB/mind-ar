@@ -1,6 +1,6 @@
 [project]
 name = "mindar"
-version = "0.1.4"
+version = "0.1.5"
 description = "High-performance MindAR implementation for real-time image recognition on edge devices. Developed by FANSEE LAB."
 authors = [{name = "FANSEE LAB", email = "info@fansee.com"}]
 maintainers = [{name = "FANSEE LAB", email = "info@fansee.com"}]

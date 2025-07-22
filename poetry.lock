@@ -1615,4 +1615,4 @@ performance = ["numba"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.9"
-content-hash = "4c856720bc38cc0dc01689ca0b7a64b2d14585f945b2e82caa4b163b1da11a0f"
+content-hash = "436830d4e29cb9e64e95f705591184249c04bf4fa80614a9ae35596ceef6b9cd"

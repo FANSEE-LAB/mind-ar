@@ -1,8 +1,5 @@
 """
-ARtify-Core: High-performance real-time image recognition & tracking.
-
-This package provides optimized feature detection, matching, and tracking
-for AR applications on edge devices with minimal dependencies.
+MindAR: High-performance real-time image recognition & tracking for AR applications.
 """
 
 from .compiler import MindARCompiler
@@ -10,8 +7,11 @@ from .detector import Detector, FeaturePoint
 from .matcher import Match, Matcher
 from .tracker import Tracker
 
-__version__ = "0.2.0"
-__author__ = "FANSEE <info@fansee.studio>"
-__license__ = "MIT"
+try:
+    from importlib.metadata import version
+
+    __version__ = version("mindar")
+except ImportError:
+    __version__ = "unknown"
 
 __all__ = ["Detector", "Matcher", "Tracker", "MindARCompiler", "FeaturePoint", "Match"]

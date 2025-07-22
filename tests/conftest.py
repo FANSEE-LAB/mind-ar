@@ -3,10 +3,9 @@ Pytest configuration and fixtures for MindAR tests.
 Provides test data and utilities for cross-version compatibility testing.
 """
 
-import os
 import sys
 from pathlib import Path
-from typing import Generator, List
+from typing import List
 
 import numpy as np
 import pytest

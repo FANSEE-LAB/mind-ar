@@ -5,10 +5,8 @@ Ensures compatibility across Python versions and proper serialization.
 
 import json
 import pickle
-from typing import Dict, List
 
 import numpy as np
-import pytest
 
 from mindar.types import DetectionResult, FeaturePoint, Match
 

@@ -390,7 +390,8 @@ class Detector:
 
         feature_points = []
         if corners is not None:
-            corners = np.int0(corners)
+            # Use np.int32 for better compatibility across NumPy versions
+            corners = corners.astype(np.int32)
             for corner in corners:
                 x_coord, y_coord = corner.ravel()
 

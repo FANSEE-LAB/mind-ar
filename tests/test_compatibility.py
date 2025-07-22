@@ -13,6 +13,12 @@ from mindar.matcher import Matcher, MatcherConfig
 from mindar.tracker import TrackerConfig
 from mindar.types import DetectionResult, FeaturePoint, Match
 
+# Import cv2 for error handling tests
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 
 class TestPythonVersionCompatibility:
     """Test compatibility across Python versions."""
@@ -87,9 +93,14 @@ class TestDependencyCompatibility:
         # Test basic OpenCV functionality
         img = np.random.randint(0, 255, (100, 100), dtype=np.uint8)
 
-        # Test grayscale conversion
-        gray = cv2.cvtColor(img, cv2.COLOR_GRAY2GRAY)
-        assert gray.shape == img.shape
+        # Test grayscale conversion (for color images)
+        color_img = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+        gray = cv2.cvtColor(color_img, cv2.COLOR_BGR2GRAY)
+        assert gray.shape == (100, 100)
+
+        # Test that grayscale image remains unchanged
+        gray_copy = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        assert gray_copy.shape == (100, 100, 3)
 
         # Test blur
         blurred = cv2.GaussianBlur(img, (3, 3), 0)
@@ -295,8 +306,8 @@ class TestPlatformCompatibility:
 
     def test_memory_alignment(self):
         """Test memory alignment compatibility."""
-        # Test with different array sizes
-        sizes = [10, 100, 1000, 10000]
+        # Test with different array sizes (use perfect squares)
+        sizes = [10, 100, 1024, 10000]
 
         for size in sizes:
             # Create arrays of different dtypes
@@ -311,10 +322,12 @@ class TestPlatformCompatibility:
                 # Test with detector
                 if size >= 100:  # Only test with reasonable sizes
                     detector = Detector()
-                    # Create image from array
-                    img = (arr.reshape(int(np.sqrt(size)), -1) * 255).astype(np.uint8)
-                    detection_result = detector.detect(img)
-                    assert "feature_points" in detection_result
+                    # Create image from array (use perfect squares)
+                    side_length = int(np.sqrt(size))
+                    if side_length * side_length == size:  # Ensure it's a perfect square
+                        img = (arr.reshape(side_length, side_length) * 255).astype(np.uint8)
+                        detection_result = detector.detect(img)
+                        assert "feature_points" in detection_result
 
 
 class TestErrorHandlingCompatibility:
@@ -345,7 +358,7 @@ class TestErrorHandlingCompatibility:
         try:
             detector.detect(invalid_array)
             assert False, "Should raise an exception"
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, cv2.error):
             pass  # Expected
 
     def test_edge_case_handling(self):

@@ -1,71 +1,66 @@
-[project]
+[tool.poetry]
 name = "mindar"
 version = "0.1.5"
 description = "High-performance MindAR implementation for real-time image recognition on edge devices. Developed by FANSEE LAB."
-authors = [{name = "FANSEE LAB", email = "info@fansee.com"}]
-maintainers = [{name = "FANSEE LAB", email = "info@fansee.com"}]
+authors = ["FANSEE LAB <info@fansee.com>"]
+maintainers = ["FANSEE LAB <info@fansee.com>"]
 readme = "README.md"
-license = {text = "MIT"}
-urls = {Repository = "https://github.com/FANSEE-LAB/mind-ar", Documentation = "https://github.com/FANSEE-LAB/mind-ar#readme"}
-
-dependencies = [
-    "numpy>=1.21.0,<2.0.0; python_version >= '3.9'",
-    "opencv-python>=4.5.0; python_version >= '3.9'",
-    "msgpack>=1.0.0",
-    "pytest (>=8.4.1,<9.0.0)"
-]
-python = ">=3.9.0"
-
-optional-dependencies.performance = [
-    # Optional: JIT acceleration for best performance
-    "numba>=0.59.0"
-]
-
-optional-dependencies.dev = [
-    "pytest>=8.0.0; python_version >= '3.8'",
-    "pytest-cov>=6.0.0; python_version >= '3.9'",
-    "black>=25.0.0; python_version >= '3.9'",
-    "isort>=6.0.0; python_version >= '3.9'"
-]
-
-[project.scripts]
-mindar-compile = "mindar.compiler:main"
-
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-dir]
-"" = "src"
-
-[tool.black]
-line-length = 120
-
-[tool.pylint]
-disable = ["C0301"]
-extension-pkg-allow-list = ["cv2"]
-
-[tool.isort]
-profile = "black"
-line_length = 120
+license = "MIT"
+repository = "https://github.com/FANSEE-LAB/mind-ar"
+documentation = "https://github.com/FANSEE-LAB/mind-ar#readme"
+packages = [{include = "mindar", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
-opencv-python = "^4.8.0"
-numpy = "^1.24.0"
+numpy = ">=1.21.0,<2.0.0"
+opencv-python = "^4.5.0"
 msgpack = "^1.0.0"
+
+[tool.poetry.group.performance]
+optional = true
+
+[tool.poetry.group.performance.dependencies]
 numba = "^0.59.0"
 
 [tool.poetry.group.dev.dependencies]
-twine = "^6.1.0"
 pytest = "^8.4.1"
 pytest-cov = "^6.2.1"
 black = "^25.1.0"
 isort = "^6.0.1"
 flake8 = "^7.3.0"
 bandit = "^1.8.6"
+twine = "^6.1.0"
 psutil = "^7.0.0"
+
+[tool.poetry.scripts]
+mindar-compile = "mindar.compiler:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 120
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=mindar",
+    "--cov-report=term-missing",
+    "--cov-report=xml",
+    "--cov-report=html"
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "performance: marks tests as performance tests"
+]
